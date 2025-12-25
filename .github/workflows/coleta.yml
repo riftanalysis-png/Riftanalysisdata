@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60 # Segurança para não travar infinito
+    timeout-minutes: 90 # Segurança para não travar infinito
     
     steps:
       - name: Checkout do codigo
