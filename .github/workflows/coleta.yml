@@ -1,0 +1,35 @@
+name: Coleta Diaria LoL
+
+on:
+  schedule:
+    - cron: '0 */4 * * *' # Roda a cada 4 horas
+  workflow_dispatch: # Permite rodar manual clicando no botao
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout do codigo
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+
+      - name: Rodar Script
+        env:
+          RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+        run: python app.py
+
+      - name: Salvar CSV (Commit)
+        run: |
+          git config --global user.name 'Bot LoL'
+          git config --global user.email 'bot@lol.com'
+          git add *.csv
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Novas partidas" && git push)
