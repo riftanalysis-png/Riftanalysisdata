@@ -139,7 +139,9 @@ def collect_match_ids(target_amount):
                 matches = watcher.match.matchlist_by_puuid(REGION, puuid, count=10)
                 all_match_ids.update(matches)
                 time.sleep(1.0)
-            except: continue
+            except Exception as e:
+                print(f"ERRO ao pegar partida: {e}") # Agora vai aparecer no log!
+                continue
     except Exception as e:
         print(f"Erro na liga: {e}")
         
