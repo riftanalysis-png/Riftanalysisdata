@@ -1,19 +1,23 @@
-name: Coleta Diaria LoL (Meta 10k)
+name: Coleta Diaria LoL
 
 on:
   schedule:
-    # 05:00 UTC equivale a 02:00 no horário de Brasília/Rio
-    - cron: '0 5 * * *'
-  workflow_dispatch: # Botão para rodar manual se quiser testar
+    - cron: '0 5 * * *' # Roda às 02:00 AM (Horário Rio/Brasília)
+  workflow_dispatch: # Botão manual
+
+permissions:
+  contents: write # Permissão vital para o bot salvar
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90 # Segurança para não travar infinito
+    timeout-minutes: 90 # Tempo extra para coleta grande
     
     steps:
       - name: Checkout do codigo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
 
       - name: Configurar Python
         uses: actions/setup-python@v4
@@ -31,20 +35,10 @@ jobs:
           SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python app.py
 
-      - name: Salvar CSV no GitHub
-        run: |
-          git config --global user.name 'Bot LoL'
-          git config --global user.email 'bot@lol.com'
-          
-          if ls *.csv 1> /dev/null 2>&1; then
-            git add *.csv
-            # Se tiver mudança, comita
-            if ! git diff --quiet && ! git diff --staged --quiet; then
-              git commit -m "Dados atualizados [skip ci]"
-              # O PULO DO GATO: Puxa as mudanças remotas antes de enviar
-              git pull --rebase origin main
-              git push
-            fi
-          else
-            echo "AVISO: Nenhum CSV gerado hoje."
-          fi
+      - name: Salvar Dados (Auto Commit Blindado)
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Bot: Novas partidas adicionadas"
+          file_pattern: '*.csv'
+          # Se tiver conflito, força a atualização (seguro pois queremos apenas somar dados)
+          push_options: '--force'
