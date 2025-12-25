@@ -1,2 +1,5 @@
 pandas
 riotwatcher
+gspread
+oauth2client
+gspread-dataframe
