@@ -195,7 +195,7 @@ def main():
     if buffer:
         df_new = pd.DataFrame(buffer)
         header = not os.path.isfile(FILE_RAW)
-        df_new.to_csv(FILE_RAW, mode='a', index=False, sep=';', decimal=',', header=header)
+        df_new.to_csv(FILE_RAW, mode='a', index=False, sep=',', decimal='.', header=header)
         print("SUCESSO: CSV Atualizado e Salvo!")
     else:
         print("AVISO: Nenhum dado extraído das partidas.")
