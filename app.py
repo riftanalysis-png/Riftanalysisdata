@@ -8,7 +8,7 @@ from riotwatcher import LolWatcher, ApiError
 # --- CONFIGURAÇÃO ---
 API_KEY = os.environ.get("RIOT_API_KEY") 
 REGION = 'kr'
-MATCH_TARGET = 50 
+MATCH_TARGET = 1440 
 FILE_RAW = 'Historico_Bruto_Completo.csv'
 
 # Força o Python a imprimir o log na hora (sem atraso)
