@@ -31,5 +31,11 @@ jobs:
         run: |
           git config --global user.name 'Bot LoL'
           git config --global user.email 'bot@lol.com'
-          git add *.csv
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Novas partidas" && git push)
+          
+          # Verifica se o arquivo existe antes de tentar salvar
+          if ls *.csv 1> /dev/null 2>&1; then
+            git add *.csv
+            git diff --quiet && git diff --staged --quiet || (git commit -m "Novas partidas [skip ci]" && git push)
+          else
+            echo "AVISO: Nenhum arquivo CSV foi gerado. Verifique os logs acima."
+          fi
