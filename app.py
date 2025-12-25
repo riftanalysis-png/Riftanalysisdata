@@ -14,7 +14,7 @@ API_KEY = os.environ.get("RIOT_API_KEY")
 GCP_SA_KEY = os.environ.get("GCP_SA_KEY") # Chave do Google (JSON inteiro)
 SHEET_ID = os.environ.get("SHEET_ID")     # ID da Planilha
 REGION = 'kr'
-MATCH_TARGET = 1440  # Meta diária (ajuste conforme necessário)
+MATCH_TARGET = 1440  # Meta diária
 FILE_RAW = 'Historico_Bruto_Completo.csv'
 
 # Força o Python a imprimir o log na hora
@@ -165,4 +165,61 @@ def collect_match_ids(target_amount):
             
             try:
                 puuid = entry.get('puuid')
-                if not
+                if not puuid:
+                    summ_id = entry.get('summonerId')
+                    if summ_id:
+                        puuid = watcher.summoner.by_id(REGION, summ_id)['puuid']
+                    else:
+                        continue
+
+                matches = watcher.match.matchlist_by_puuid(REGION, puuid, count=10)
+                all_match_ids.update(matches)
+                print(f" > Jogador OK. Partidas acumuladas: {len(all_match_ids)}")
+                time.sleep(1.0)
+                
+            except Exception as e:
+                print(f"ERRO ao processar jogador: {e}")
+                continue
+                
+    except Exception as e:
+        print(f"ERRO CRÍTICO NA LIGA: {e}")
+        
+    return list(all_match_ids)[:target_amount]
+
+def main():
+    processed_ids = set()
+    # Verifica CSV com vírgula (novo padrão)
+    if os.path.isfile(FILE_RAW):
+        try:
+            df = pd.read_csv(FILE_RAW, sep=',', decimal='.')
+            if 'Match ID' in df.columns:
+                processed_ids = set(df['Match ID'].astype(str))
+                print(f"Base Local carregada: {len(processed_ids)} partidas.")
+        except: pass
+
+    match_ids = collect_match_ids(MATCH_TARGET + 5)
+    match_ids = [mid for mid in match_ids if str(mid) not in processed_ids][:MATCH_TARGET]
+    
+    if not match_ids:
+        print("Sem partidas novas.")
+        return
+
+    print(f"Processando {len(match_ids)} partidas...")
+    buffer = []
+    for i, m_id in enumerate(match_ids):
+        data = process_match(m_id)
+        if data: buffer.extend(data)
+        time.sleep(1.2)
+
+    if buffer:
+        df_new = pd.DataFrame(buffer)
+        
+        # SALVA COM VÍRGULA E PONTO (Internacional)
+        header = not os.path.isfile(FILE_RAW)
+        df_new.to_csv(FILE_RAW, mode='a', index=False, sep=',', decimal='.', header=header)
+        print("CSV Local Atualizado.")
+        
+        upload_to_sheets(df_new)
+
+if __name__ == "__main__":
+    main()
