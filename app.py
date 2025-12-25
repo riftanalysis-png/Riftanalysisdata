@@ -14,7 +14,7 @@ API_KEY = os.environ.get("RIOT_API_KEY")
 GCP_SA_KEY = os.environ.get("GCP_SA_KEY") # Chave do Google (JSON inteiro)
 SHEET_ID = os.environ.get("SHEET_ID")     # ID da Planilha
 REGION = 'kr'
-MATCH_TARGET = 1440  # Meta diária
+MATCH_TARGET = 3  # Meta diária
 FILE_RAW = 'Historico_Bruto_Completo.csv'
 
 # Força o Python a imprimir o log na hora
