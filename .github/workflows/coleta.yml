@@ -1,13 +1,15 @@
-name: Coleta Diaria LoL
+name: Coleta Diaria LoL (Meta 10k)
 
 on:
   schedule:
-    - cron: '0 */4 * * *' # Roda a cada 4 horas
-  workflow_dispatch: # Permite rodar manual clicando no botao
+    # 05:00 UTC equivale a 02:00 no horário de Brasília/Rio
+    - cron: '0 5 * * *'
+  workflow_dispatch: # Botão para rodar manual se quiser testar
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60 # Segurança para não travar infinito
     
     steps:
       - name: Checkout do codigo
@@ -25,17 +27,18 @@ jobs:
       - name: Rodar Script
         env:
           RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python app.py
 
-      - name: Salvar CSV (Commit)
+      - name: Salvar CSV no GitHub
         run: |
           git config --global user.name 'Bot LoL'
           git config --global user.email 'bot@lol.com'
           
-          # Verifica se o arquivo existe antes de tentar salvar
           if ls *.csv 1> /dev/null 2>&1; then
             git add *.csv
-            git diff --quiet && git diff --staged --quiet || (git commit -m "Novas partidas [skip ci]" && git push)
+            git diff --quiet && git diff --staged --quiet || (git commit -m "Backup diario: +720 partidas [skip ci]" && git push)
           else
-            echo "AVISO: Nenhum arquivo CSV foi gerado. Verifique os logs acima."
+            echo "AVISO: Nenhum CSV gerado hoje."
           fi
