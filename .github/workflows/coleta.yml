@@ -38,7 +38,13 @@ jobs:
           
           if ls *.csv 1> /dev/null 2>&1; then
             git add *.csv
-            git diff --quiet && git diff --staged --quiet || (git commit -m "Backup diario: +720 partidas [skip ci]" && git push)
+            # Se tiver mudança, comita
+            if ! git diff --quiet && ! git diff --staged --quiet; then
+              git commit -m "Dados atualizados [skip ci]"
+              # O PULO DO GATO: Puxa as mudanças remotas antes de enviar
+              git pull --rebase origin main
+              git push
+            fi
           else
             echo "AVISO: Nenhum CSV gerado hoje."
           fi
