@@ -14,11 +14,6 @@ REGION_ACCOUNT = 'americas'
 
 # --- 🎯 SEUS JOGADORES ALVO ---
 ALVOS = [
-    "Kami#BR1",
-    "Titan#RED",
-    "Brance#LOUD",
-    "Robo#LOUD",
-    "Cariok#PAIN",
     "Zekas#2002",
     "han dao#EGC",
     "Pilot#br11",
