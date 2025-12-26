@@ -245,7 +245,7 @@ def main():
     for p in players:
         try:
             # count=10 para garantir bom histórico na execução diária
-            matches = watcher.match.matchlist_by_puuid(REGION_MATCH, p['puuid'], count=10)
+            matches = watcher.match.matchlist_by_puuid(REGION_MATCH, p['puuid'], count=35)
             for m in matches:
                 if m not in processed_ids:
                     new_match_ids.add(m)
