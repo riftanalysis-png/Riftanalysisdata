@@ -27,6 +27,6 @@ jobs:
 
       - name: Rodar Script BR
         env:
-          RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+          RIOT_API_KEY: ${{ secrets.RIOT_API_KEY_BR }}
           DB_URL: ${{ secrets.DB_URL }}
         run: python app_br.py
