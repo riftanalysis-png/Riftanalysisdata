@@ -1,168 +1,228 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 from sqlalchemy import create_engine
 import os
 
-# --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="LoL Matchup Pro", layout="wide", page_icon="🥊")
+# --- CONFIGURAÇÃO VISUAL ---
+st.set_page_config(page_title="Pro Player Profile", layout="wide", page_icon="🛡️")
 
-# --- CONEXÃO E DADOS ---
+# CSS para tentar imitar o visual "Dark Blue" das imagens
+st.markdown("""
+<style>
+    .stMetric {
+        background-color: #0e1117;
+        padding: 10px;
+        border-radius: 5px;
+        border: 1px solid #303030;
+    }
+    h1, h2, h3 {
+        color: #f0f2f6;
+    }
+    .big-font {
+        font-size:20px !important;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- CONEXÃO ---
 def get_engine():
     db_url = st.secrets.get("DB_URL") or os.environ.get("DB_URL")
-    if not db_url:
-        st.error("⚠️ Sem conexão com o Banco.")
-        st.stop()
     return create_engine(db_url)
 
 @st.cache_data(ttl=600)
 def load_data():
     try:
         engine = get_engine()
-        # Ordenado por data para pegar o meta atual
-        query = 'SELECT * FROM partidas ORDER BY "Game Start Time" DESC'
+        # Puxa da tabela BR agora
+        query = 'SELECT * FROM partidas_br ORDER BY "Game Start Time" DESC'
         df = pd.read_sql(query, engine)
-        
-        # Tratamentos
         df['Game Start Time'] = pd.to_datetime(df['Game Start Time'], unit='ms')
-        df['Data'] = df['Game Start Time'].dt.strftime('%d/%m/%Y')
-        df['Resultado'] = df['Win Rate %'].apply(lambda x: '✅ Win' if x == 1 else '❌ Loss')
-        
+        df['Data'] = df['Game Start Time'].dt.strftime('%d/%m')
         return df
     except Exception as e:
-        st.error(f"Erro: {e}")
         return pd.DataFrame()
 
-df = load_data()
+df_raw = load_data()
 
-if df.empty:
-    st.warning("Banco de dados vazio. Aguarde a coleta.")
+if df_raw.empty:
+    st.error("Sem dados na tabela 'partidas_br'. Rode o coletor primeiro!")
     st.stop()
 
-# --- SIDEBAR GLOBAL ---
-st.sidebar.header("🎯 Seleção do Jogador")
-# Se tivermos mais de um jogador monitorado no futuro, filtramos aqui. 
-# Por enquanto, assumimos que todos os dados são relevantes.
-periodo = st.sidebar.selectbox("Período", ["Todos os Tempos", "Últimos 30 dias", "Season Atual"])
+# --- SIDEBAR: SELEÇÃO DO JOGADOR ---
+st.sidebar.header("🕵️ Seleção de Perfil")
+lista_jogadores = df_raw['Player Name'].unique()
+jogador = st.sidebar.selectbox("Escolha o Pro Player:", lista_jogadores)
 
-# --- ESTRUTURA DE ABAS ---
-st.title("🥊 Análise de Matchups (SoloQ)")
-tab_matchups, tab_geral, tab_raw = st.tabs(["⚔️ Matchups Específicos", "📊 Performance Geral", "📝 Dados Brutos"])
+# Filtra dados do jogador
+df = df_raw[df_raw['Player Name'] == jogador].copy()
 
-# ==============================================================================
-# ABA 1: MATCHUP ANALYZER (O FOCO AGORA)
-# ==============================================================================
-with tab_matchups:
-    col_sel1, col_sel2 = st.columns(2)
+# --- CÁLCULO DE "NOTAS" (SCOUTING) ---
+# Heurística simples para gerar notas de 0 a 100 baseadas nas stats
+media_lane = df["Gold Diff 14'"].mean()
+nota_lane = min(100, max(50, 70 + (media_lane / 50))) # Base 70, sobe/desce conforme ouro
+
+media_kp = df['Kill Participation'].mean() * 100
+nota_impacto = min(100, max(40, media_kp + 20)) 
+
+media_dpm = df['Damage/Min'].mean()
+nota_conversao = min(100, max(50, (media_dpm / 1000) * 100))
+
+media_visao = df['Vision Score/Min'].mean()
+nota_visao = min(100, max(40, media_visao * 40))
+
+nota_geral = (nota_lane + nota_impacto + nota_conversao + nota_visao) / 4
+
+# --- LAYOUT PRINCIPAL (GRID) ---
+st.title(f"📊 Relatório de Scout: {jogador}")
+st.divider()
+
+# Cria 3 colunas principais (Esquerda, Centro, Direita)
+col_L, col_C, col_R = st.columns([1.2, 0.8, 1.5])
+
+# --- COLUNA ESQUERDA: CAMPEÕES E GRÁFICOS ---
+with col_L:
+    st.subheader("🏆 Melhores Campeões")
+    stats_champ = df.groupby('Champion').agg({
+        'Match ID': 'count',
+        'Win Rate %': 'mean',
+        'KDA': 'mean'
+    }).reset_index()
+    stats_champ.columns = ['Champ', 'Jogos', 'Win Rate', 'KDA']
+    stats_champ = stats_champ.sort_values('Jogos', ascending=False).head(5)
     
-    with col_sel1:
-        # Escolha SEU campeão
-        meus_champs = sorted(df['Champion'].unique())
-        meu_champ = st.selectbox("Eu estou jogando de:", meus_champs)
+    st.dataframe(
+        stats_champ, 
+        hide_index=True,
+        column_config={
+            "Win Rate": st.column_config.ProgressColumn("WR", format="%.0f%%", min_value=0, max_value=1),
+            "KDA": st.column_config.NumberColumn("KDA", format="%.2f")
+        },
+        use_container_width=True
+    )
     
-    # Filtra dados apenas desse campeão
-    df_meu = df[df['Champion'] == meu_champ]
+    st.subheader("📉 Eficiência de Recursos")
+    # Bolhas: Eixo X = Ouro, Eixo Y = Dano, Tamanho = KDA
+    fig_bubble = px.scatter(
+        df, 
+        x="Gold/Min", 
+        y="Damage/Min", 
+        size="KDA", 
+        color="Win Rate %",
+        hover_data=['Champion'],
+        color_continuous_scale=["red", "green"],
+        title="Dano por Ouro (Quem carrega mais?)"
+    )
+    fig_bubble.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0))
+    st.plotly_chart(fig_bubble, use_container_width=True)
+
+# --- COLUNA CENTRAL: CARD DO JOGADOR ---
+with col_C:
+    st.markdown(f"<div style='text-align: center;'><h2>{jogador}</h2></div>", unsafe_allow_html=True)
     
-    if df_meu.empty:
-        st.info("Sem dados para este campeão.")
-    else:
-        # Agrupa por INIMIGO para ver contra quem jogamos
-        # Calculamos MÉDIA e MEDIANA para comparar
-        matchup_stats = df_meu.groupby('Enemy Champion').agg({
-            'Match ID': 'count',
-            'Win Rate %': 'mean',
-            "Gold Diff 14'": ['mean', 'median'],
-            "CS Diff 14'": ['mean', 'median'],
-            "XP Diff 14'": ['mean'],
-            'Kills': 'mean',
-            'Deaths': 'mean'
-        }).reset_index()
+    # Simulação da foto (Usamos o icone do campeão mais jogado ou algo genérico)
+    main_champ = stats_champ.iloc[0]['Champ']
+    st.image(f"https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{main_champ}_0.jpg", caption="Main Pick")
+    
+    # As notas estilo FIFA/Scout
+    c1, c2 = st.columns(2)
+    c1.metric("Lane Phase", f"{nota_lane:.0f}")
+    c2.metric("Impacto", f"{nota_impacto:.0f}")
+    
+    c3, c4 = st.columns(2)
+    c3.metric("Conversão", f"{nota_conversao:.0f}")
+    c4.metric("Visão", f"{nota_visao:.0f}")
+    
+    st.markdown(f"<h1 style='text-align: center; color: gold; font-size: 60px;'>{nota_geral:.0f}</h1>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center;'>OVERALL SCORE</div>", unsafe_allow_html=True)
 
-        # Ajustando nomes das colunas (O Pandas cria MultiIndex, vamos achatar)
-        matchup_stats.columns = [
-            'Inimigo', 'Jogos', 'Win Rate', 
-            'Gold Diff (Média)', 'Gold Diff (Mediana)',
-            'CS Diff (Média)', 'CS Diff (Mediana)',
-            'XP Diff (Média)', 'Kills', 'Deaths'
-        ]
-        
-        # Filtra apenas matchups com pelo menos 1 jogo (pode aumentar depois)
-        matchup_stats = matchup_stats[matchup_stats['Jogos'] > 0].sort_values(by='Jogos', ascending=False)
+# --- COLUNA DIREITA: TABELA DENSA DE KPIS ---
+with col_R:
+    st.subheader("📑 Estatísticas Detalhadas")
+    
+    # Função para criar linhas da tabela bonitinha
+    def kpi_row(label, value, fmt="{:.2f}"):
+        return f"**{label}:** {fmt.format(value)}"
 
-        # KPI DO CAMPEÃO GERAL
-        st.divider()
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric(f"Jogos de {meu_champ}", len(df_meu))
-        c2.metric("Win Rate Global", f"{df_meu['Win Rate %'].mean()*100:.1f}%")
-        c3.metric("GD@15 Médio", f"{df_meu["Gold Diff 14'"].mean():.0f}")
-        c4.metric("KDA Médio", f"{df_meu['KDA'].mean():.2f}")
-        st.divider()
+    # Organizando em grid 3x3
+    k1, k2, k3 = st.columns(3)
+    k1.metric("KDA", f"{df['KDA'].mean():.2f}")
+    k2.metric("Visão/Min", f"{df['Vision Score/Min'].mean():.2f}")
+    k3.metric("DPM", f"{df['Damage/Min'].mean():.0f}")
+    
+    k4, k5, k6 = st.columns(3)
+    k4.metric("GPM", f"{df['Gold/Min'].mean():.0f}")
+    k5.metric("Kill Part", f"{df['Kill Participation'].mean()*100:.1f}%")
+    k6.metric("Farm/Min", f"{df['Farm/Min'].mean():.1f}")
 
-        with col_sel2:
-            # Escolha o INIMIGO específico para detalhar
-            inimigos_disponiveis = sorted(matchup_stats['Inimigo'].unique())
-            inimigo_foco = st.selectbox("Contra o Inimigo (Detalhar):", ["Todos"] + inimigos_disponiveis)
+    st.divider()
+    
+    st.markdown("#### ⚔️ Lane Phase (14 min)")
+    l1, l2, l3 = st.columns(3)
+    
+    # Tenta pegar as colunas de 14 min (usando .get para não quebrar se não existir)
+    cs_diff = df.get("CS Diff 14'", pd.Series([0])).mean()
+    gold_diff = df.get("Gold Diff 14'", pd.Series([0])).mean()
+    xp_diff = df.get("XP Diff 14'", pd.Series([0])).mean()
+    
+    l1.metric("CS Diff", f"{cs_diff:+.1f}", delta_color="normal")
+    l2.metric("Gold Diff", f"{gold_diff:+.0f}", delta_color="normal")
+    l3.metric("XP Diff", f"{xp_diff:+.0f}", delta_color="normal")
 
-        # VISUALIZAÇÃO 1: TABELA GERAL DE MATCHUPS
-        if inimigo_foco == "Todos":
-            st.subheader(f"Como {meu_champ} lida com cada matchup?")
-            st.caption("Ordenado por popularidade. GD@14 = Diferença de Ouro aos 14 min.")
-            
-            # Formatação visual da tabela
-            st.dataframe(
-                matchup_stats,
-                column_config={
-                    "Win Rate": st.column_config.ProgressColumn("Win Rate", format="%.1f%%", min_value=0, max_value=1),
-                    "Gold Diff (Mediana)": st.column_config.NumberColumn("Ouro @14 (Mediana)", format="%d"),
-                    "CS Diff (Mediana)": st.column_config.NumberColumn("CS @14 (Mediana)", format="%d"),
-                },
-                hide_index=True,
-                use_container_width=True
-            )
-            
-            # Gráfico de Bolhas: Dificuldade do Matchup
-            # Eixo X: Gold Diff (Laning Phase) | Eixo Y: Win Rate (Jogo) | Tamanho: Nº Jogos
-            st.subheader("Mapa de Dificuldade")
-            st.caption("Esquerda/Baixo = Matchups Difíceis | Direita/Cima = Matchups Fáceis")
-            st.scatter_chart(
-                matchup_stats,
-                x='Gold Diff (Mediana)',
-                y='Win Rate',
-                size='Jogos',
-                color='Inimigo' # Cada bolinha é um boneco inimigo
-            )
+    # Gráfico de Desempenho (Linha)
+    st.subheader("📈 Evolução de Ouro")
+    st.line_chart(df.set_index("Data")["Gold Diff 14'"], height=200)
 
-        # VISUALIZAÇÃO 2: X1 ESPECÍFICO (Drill Down)
-        else:
-            st.subheader(f"⚔️ Análise Detalhada: {meu_champ} vs {inimigo_foco}")
-            
-            df_x1 = df_meu[df_meu['Enemy Champion'] == inimigo_foco]
-            
-            # Comparação Lado a Lado
-            k1, k2, k3 = st.columns(3)
-            media_gd = df_x1["Gold Diff 14'"].mean()
-            k1.metric("Jogos Analisados", len(df_x1))
-            k2.metric("Win Rate no Matchup", f"{df_x1['Win Rate %'].mean()*100:.0f}%")
-            k3.metric(
-                "Ouro @ 14min", 
-                f"{media_gd:.0f}", 
-                delta=f"{media_gd - df_meu["Gold Diff 14'"].mean():.0f} vs Média Geral",
-                delta_color="normal" # Verde se for melhor que a sua média normal
-            )
-            
-            st.write("Histórico desse confronto:")
-            st.dataframe(df_x1[['Data', 'Resultado', 'KDA', "Gold Diff 14'", "CS Diff 14'", "XP Diff 14'"]])
+st.divider()
 
-# ==============================================================================
-# ABA 2: DADOS GERAIS (Backup da versão anterior)
-# ==============================================================================
-with tab_geral:
-    st.subheader("Performance Geral da Conta")
-    champion_stats = df.groupby('Champion').agg({'Match ID':'count', 'Win Rate %':'mean', 'KDA':'mean'}).reset_index()
-    champion_stats = champion_stats.sort_values('Match ID', ascending=False)
-    st.dataframe(champion_stats, hide_index=True, use_container_width=True)
+# --- ROW 2: RADAR CHARTS (ESTILO DE JOGO) ---
+st.subheader("🕸️ Análise de Estilo (Radar Charts)")
+r1, r2, r3 = st.columns(3)
 
-# ==============================================================================
-# ABA 3: RAW DATA
-# ==============================================================================
-with tab_raw:
-    st.dataframe(df)
+def create_radar(categories, values, title):
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=values,
+        theta=categories,
+        fill='toself',
+        name=jogador,
+        line_color='#00ffcc'
+    ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        showlegend=False,
+        title=title,
+        height=300,
+        margin=dict(l=40, r=40, t=40, b=20)
+    )
+    return fig
+
+with r1:
+    # Game Style (Simulado com heurísticas)
+    agg = df['Win Rate %'].mean() * 100
+    snowball = min(100, max(0, gold_diff / 20 + 50))
+    farm = min(100, (df['Farm/Min'].mean() / 10) * 100)
+    cats = ['Team Fight', 'Snowball', 'Farm', 'Vision', 'Aggression']
+    vals = [nota_impacto, snowball, farm, nota_visao, agg]
+    st.plotly_chart(create_radar(cats, vals, "Estilo de Jogo"), use_container_width=True)
+
+with r2:
+    # Lane Dominance
+    # Normalizando diffs para escala 0-100 (Assumindo que +1000 gold = 100, -1000 = 0)
+    gd_norm = min(100, max(0, 50 + (gold_diff / 40)))
+    xp_norm = min(100, max(0, 50 + (xp_diff / 40)))
+    cs_norm = min(100, max(0, 50 + (cs_diff / 2)))
+    solo_kill = min(100, df['Kills'].mean() * 20) # Exemplo
+    
+    cats_lane = ['Gold @14', 'XP @14', 'CS @14', 'Plates', 'Solo Kills']
+    vals_lane = [gd_norm, xp_norm, cs_norm, 60, solo_kill] # Plates hardcoded pq nao temos diff
+    st.plotly_chart(create_radar(cats_lane, vals_lane, "Dominância de Rota"), use_container_width=True)
+
+with r3:
+    # Correlações (Scatter simples)
+    st.markdown("#### 🎯 Foco do Treino")
+    st.write("Relação: **Farm aos 14** vs **XP Diff**")
+    fig_corr = px.scatter(df, x="CS 14'", y="XP Diff 14'", trendline="ols", color="Resultado")
+    st.plotly_chart(fig_corr, use_container_width=True)
