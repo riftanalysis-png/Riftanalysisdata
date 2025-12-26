@@ -199,7 +199,7 @@ def main():
     for i, m_id in enumerate(match_list):
         data = process_match(m_id)
         if data: buffer.extend(data)
-        time.sleep(1.2)
+        time.sleep(2.5)
 
     if buffer:
         df_new = pd.DataFrame(buffer)
