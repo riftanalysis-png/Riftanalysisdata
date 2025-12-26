@@ -3,17 +3,18 @@ import time
 import os
 import sys
 from datetime import datetime
-from riotwatcher import LolWatcher, ApiError
+# CORREÇÃO 1: Importando RiotWatcher para lidar com contas/nicks
+from riotwatcher import LolWatcher, RiotWatcher, ApiError
 from sqlalchemy import create_engine, text
 
 # --- CONFIGURAÇÃO ---
 API_KEY = os.environ.get("RIOT_API_KEY") 
 DB_URL = os.environ.get("DB_URL") 
-REGION_MATCH = 'br1'      # Servidor das Partidas
-REGION_ACCOUNT = 'americas' # Servidor de Contas (Riot ID)
+REGION_MATCH = 'br1'      # Servidor das Partidas (BR)
+REGION_ACCOUNT = 'americas' # Servidor de Contas (Riot ID sempre é Americas)
 
-# --- 🎯 LISTA DE JOGADORES ALVO (Edite aqui) ---
-# Formato: "Nome#TAG"
+# --- 🎯 LISTA DE JOGADORES ALVO ---
+# Atualizei com os nomes que vi no seu log de erro
 ALVOS = [
     "Zekas#2002",
     "han dao#EGC",
@@ -28,10 +29,13 @@ if not API_KEY or not DB_URL:
     print("ERRO: Credenciais ausentes.")
     sys.exit(1)
 
-watcher = LolWatcher(API_KEY)
+# CORREÇÃO 2: Criando os dois vigilantes
+watcher = LolWatcher(API_KEY)      # Para dados do Jogo (Match V5)
+riot_watcher = RiotWatcher(API_KEY) # Para dados da Conta (Account V1)
+
 engine = create_engine(DB_URL)
 
-# --- REAPROVEITANDO A LÓGICA DE PROCESSAMENTO (IGUAL AO APP.PY) ---
+# --- FUNÇÕES AUXILIARES (Processamento de Partida) ---
 def get_clean_version(version_str):
     parts = version_str.split('.')
     return f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else version_str
@@ -48,31 +52,6 @@ def get_stats_at_minute(frames, minute, pid):
         cs = p['minionsKilled'] + p['jungleMinionsKilled']
         return cs, p['totalGold'], p['xp'], p['level']
     return 0, 0, 0, 0
-
-def get_team_total_at_minute(frames, minute, team_id, participants_info):
-    if minute >= len(frames): return 1
-    total_gold = 0
-    frame = frames[minute]['participantFrames']
-    team_pids = [str(p['participantId']) for p in participants_info if p['teamId'] == team_id]
-    for pid in team_pids:
-        if pid in frame: total_gold += frame[pid]['totalGold']
-    return total_gold if total_gold > 0 else 1
-
-def get_event_stats_at_minute(timeline_info, minute_limit, pid):
-    kills = 0; deaths = 0; assists = 0; plates = 0
-    limit_ms = minute_limit * 60 * 1000
-    for frame in timeline_info['frames']:
-        if frame['timestamp'] > limit_ms: break
-        for event in frame['events']:
-            if event['timestamp'] > limit_ms: continue
-            if event['type'] == 'CHAMPION_KILL':
-                if event.get('killerId') == pid: kills += 1
-                if event.get('victimId') == pid: deaths += 1
-                if pid in event.get('assistingParticipantIds', []): assists += 1
-            if event['type'] == 'TURRET_PLATE_DESTROYED':
-                if event.get('killerId') == pid or pid in event.get('assistingParticipantIds', []):
-                    plates += 1
-    return kills, deaths, assists, plates
 
 def process_match(match_id):
     try:
@@ -118,7 +97,7 @@ def process_match(match_id):
             'Qtd_Partidas': 1, 'Match ID': match_id, 'Patch': patch,
             'Champion': p['championName'], 'Enemy Champion': enemy_data['championName'],
             'Game Start Time': start_time, 'Win Rate %': 1 if p['win'] else 0,
-            'Player Name': p['summonerName'], # Adicionado para identificar quem é quem
+            'Player Name': p['summonerName'], 
             'PUUID': p['puuid'],
             
             'Kills': p['kills'], 'Deaths': p['deaths'], 'Assists': p['assists'],
@@ -138,17 +117,16 @@ def process_match(match_id):
             'Damage Taken %': safe_div(p['totalDamageTaken'], team_totals[tid]['taken']),
         }
         
-        target_minutes = [5, 6, 11, 12, 14, 18, 20]
+        target_minutes = [14] # Focando nos 14 min para economizar espaço
         for t in target_minutes:
             my_cs, my_gold, my_xp, my_lvl = get_stats_at_minute(frames, t, pid)
             en_cs, en_gold, en_xp, en_lvl = get_stats_at_minute(frames, t, enemy_pid)
             
             suffix = f"{t}'"
-            if t in [14]: # Focando nos 14 min para economizar espaço
-                stats[f'CS {suffix}'] = my_cs
-                stats[f'Gold Diff {suffix}'] = my_gold - en_gold
-                stats[f'CS Diff {suffix}'] = my_cs - en_cs
-                stats[f'XP Diff {suffix}'] = my_xp - en_xp
+            stats[f'CS {suffix}'] = my_cs
+            stats[f'Gold Diff {suffix}'] = my_gold - en_gold
+            stats[f'CS Diff {suffix}'] = my_cs - en_cs
+            stats[f'XP Diff {suffix}'] = my_xp - en_xp
 
         rows.append(stats)
     return rows
@@ -162,8 +140,10 @@ def get_puuids_from_names():
                 print(f"⚠️ Formato inválido: {riot_id} (Use Nome#TAG)")
                 continue
             name, tag = riot_id.split('#')
-            # Usa o endpoint de conta (Americas) para pegar PUUID
-            account = watcher.account.by_riot_id(REGION_ACCOUNT, name, tag)
+            
+            # CORREÇÃO 3: Usando riot_watcher para contas
+            account = riot_watcher.account.by_riot_id(REGION_ACCOUNT, name, tag)
+            
             player_data.append({'riot_id': riot_id, 'puuid': account['puuid']})
             print(f" > Encontrado: {riot_id}")
         except Exception as e:
@@ -174,25 +154,33 @@ def get_puuids_from_names():
 def load_processed_ids():
     processed = set()
     try:
-        # ATENÇÃO: Mudamos o nome da tabela para 'partidas_br'
+        # Verifica se a tabela 'partidas_br' existe antes de ler
         with engine.connect() as conn:
+            # Tenta um select simples para ver se a tabela existe
+            conn.execute(text("SELECT 1 FROM partidas_br LIMIT 1"))
+            
             query = text('SELECT "Match ID" FROM partidas_br')
             df_db = pd.read_sql(query, conn)
             processed.update(df_db['Match ID'].astype(str))
-    except:
-        pass
+            print(f"Histórico BR carregado: {len(processed)} partidas.")
+    except Exception:
+        print("Tabela 'partidas_br' ainda não existe (será criada agora).")
     return processed
 
 def main():
     players = get_puuids_from_names()
+    
+    if not players:
+        print("Nenhum jogador encontrado. Verifique os nicks.")
+        return
+
     processed_ids = load_processed_ids()
     new_match_ids = set()
     
-    # Coleta IDs de Partidas dos Jogadores
     print("\n🔍 Buscando partidas recentes...")
     for p in players:
         try:
-            # Pega as últimas 10 partidas de cada um
+            # Pega as últimas 10 partidas
             matches = watcher.match.matchlist_by_puuid(REGION_MATCH, p['puuid'], count=10)
             for m in matches:
                 if m not in processed_ids:
@@ -211,15 +199,17 @@ def main():
     for i, m_id in enumerate(match_list):
         data = process_match(m_id)
         if data: buffer.extend(data)
-        time.sleep(1.2) # Respeitando rate limit
+        time.sleep(1.2)
 
     if buffer:
         df_new = pd.DataFrame(buffer)
         
-        # MUDANÇA IMPORTANTE: Salvando na tabela 'partidas_br'
         print("💾 Salvando na tabela 'partidas_br'...")
-        df_new.to_sql('partidas_br', engine, if_exists='append', index=False, chunksize=500)
-        print("✅ SUCESSO! Dados BR salvos.")
+        try:
+            df_new.to_sql('partidas_br', engine, if_exists='append', index=False, chunksize=500)
+            print("✅ SUCESSO! Dados BR salvos.")
+        except Exception as e:
+            print(f"❌ Erro ao salvar no banco: {e}")
 
 if __name__ == "__main__":
     main()
