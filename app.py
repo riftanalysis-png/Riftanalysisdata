@@ -4,26 +4,34 @@ import os
 import random
 import sys
 import json
+from datetime import datetime
+import glob
 from riotwatcher import LolWatcher, ApiError
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from gspread_dataframe import set_with_dataframe
+from sqlalchemy import create_engine, text
 
 # --- CONFIGURAÇÃO ---
 API_KEY = os.environ.get("RIOT_API_KEY") 
-GCP_SA_KEY = os.environ.get("GCP_SA_KEY") 
-SHEET_ID = os.environ.get("SHEET_ID")     
+DB_URL = os.environ.get("DB_URL") # URL do Supabase
 REGION = 'kr'
-MATCH_TARGET = 1440 
-FILE_RAW = 'Historico_Bruto_Completo.csv'
+MATCH_TARGET = 3
+
+# Configuração de Backup CSV (Data Lake)
+DATA_FOLDER = 'dados'
+TODAY_STR = datetime.now().strftime('%Y-%m-%d')
+FILE_TODAY = f'{DATA_FOLDER}/{TODAY_STR}.csv'
 
 sys.stdout.reconfigure(line_buffering=True)
 
 if not API_KEY:
     print("ERRO: RIOT_API_KEY ausente.")
     sys.exit(1)
+if not DB_URL:
+    print("ERRO: DB_URL (Supabase) ausente.")
+    sys.exit(1)
 
 watcher = LolWatcher(API_KEY)
+# Conexão com o Banco de Dados
+engine = create_engine(DB_URL)
 
 # --- FUNÇÕES AUXILIARES ---
 def get_clean_version(version_str):
@@ -31,7 +39,6 @@ def get_clean_version(version_str):
     return f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else version_str
 
 def safe_div(a, b):
-    # Divisão segura arredondada para 2 casas
     return round(a / b, 2) if b != 0 else 0
 
 def get_stats_at_minute(frames, minute, pid):
@@ -87,20 +94,15 @@ def process_match(match_id):
 
     role_map = {100: {}, 200: {}}
     p_info_dict = {}
-    team_totals = {
-        100: {'kills': 0, 'dmg': 0, 'taken': 0, 'gold': 0}, 
-        200: {'kills': 0, 'dmg': 0, 'taken': 0, 'gold': 0}
-    }
+    team_totals = {100: {'kills': 0, 'dmg': 0, 'taken': 0}, 200: {'kills': 0, 'dmg': 0, 'taken': 0}}
 
     for p in info['participants']:
         tid = p['teamId']
         team_totals[tid]['kills'] += p['kills']
         team_totals[tid]['dmg'] += p['totalDamageDealtToChampions']
         team_totals[tid]['taken'] += p['totalDamageTaken']
-        team_totals[tid]['gold'] += p['goldEarned']
         p_info_dict[p['participantId']] = p
-        if p.get('teamPosition'): 
-            role_map[tid][p['teamPosition']] = p['participantId']
+        if p.get('teamPosition'): role_map[tid][p['teamPosition']] = p['participantId']
 
     rows = []
     for p in info['participants']:
@@ -114,19 +116,12 @@ def process_match(match_id):
         enemy_data = p_info_dict.get(enemy_pid) if enemy_pid else None
         if not enemy_data: continue
 
-        # --- DADOS GERAIS ---
         stats = {
-            'Qtd_Partidas': 1,
-            'Match ID': match_id,
-            'Patch': patch,
-            'Champion': p['championName'],
-            'Enemy Champion': enemy_data['championName'],
-            'Game Start Time': start_time,
-            'Win Rate %': 1 if p['win'] else 0,
+            'Qtd_Partidas': 1, 'Match ID': match_id, 'Patch': patch,
+            'Champion': p['championName'], 'Enemy Champion': enemy_data['championName'],
+            'Game Start Time': start_time, 'Win Rate %': 1 if p['win'] else 0,
             
-            'Kills': p['kills'],
-            'Deaths': p['deaths'],
-            'Assists': p['assists'],
+            'Kills': p['kills'], 'Deaths': p['deaths'], 'Assists': p['assists'],
             'KDA': safe_div(p['kills'] + p['assists'], p['deaths']),
             'Kill Participation': safe_div(p['kills'] + p['assists'], team_totals[tid]['kills']),
             'Total Damage Dealt': p['totalDamageDealtToChampions'],
@@ -140,8 +135,7 @@ def process_match(match_id):
             
             'Vision Score': p['visionScore'],
             'Vision Score/Min': safe_div(p['visionScore'], duration_min),
-            'Wards Placed': p['wardsPlaced'],
-            'Wards Killed': p['wardsKilled'],
+            'Wards Placed': p['wardsPlaced'], 'Wards Killed': p['wardsKilled'],
             'Control Wards Placed': p['detectorWardsPlaced'],
             
             'Damage to Buildings': p['damageDealtToBuildings'],
@@ -158,7 +152,6 @@ def process_match(match_id):
             'CC Score': p['timeCCingOthers']
         }
         
-        # --- DADOS TEMPORAIS ---
         target_minutes = [5, 6, 11, 12, 14, 18, 20]
         for t in target_minutes:
             my_cs, my_gold, my_xp, my_lvl = get_stats_at_minute(frames, t, pid)
@@ -166,46 +159,48 @@ def process_match(match_id):
             en_cs, en_gold, en_xp, en_lvl = get_stats_at_minute(frames, t, enemy_pid)
             team_gold_at_t = get_team_total_at_minute(frames, t, tid, info['participants'])
             
-            # Cálculo e ARREDONDAMENTO das estimativas
             my_dmg_est = round((p['totalDamageDealtToChampions'] / duration_min) * t, 2)
             en_dmg_est = round((enemy_data['totalDamageDealtToChampions'] / duration_min) * t, 2)
-            
             suffix = f"{t}'"
             
             if t in [5, 11, 12, 14, 20]:
-                stats[f'Kills {suffix}'] = my_k
-                stats[f'Deaths {suffix}'] = my_d
-                stats[f'Assists {suffix}'] = my_a
-                stats[f'CS {suffix}'] = my_cs
-                stats[f'Gold Earned {suffix}'] = my_gold
-                stats[f'Plates {suffix}'] = my_plates
+                stats[f'Kills {suffix}'] = my_k; stats[f'Deaths {suffix}'] = my_d; stats[f'Assists {suffix}'] = my_a
+                stats[f'CS {suffix}'] = my_cs; stats[f'Gold Earned {suffix}'] = my_gold; stats[f'Plates {suffix}'] = my_plates
                 stats[f'KDA {suffix}'] = safe_div(my_k + my_a, my_d)
-                stats[f'GPM {suffix}'] = safe_div(my_gold, t)
-                stats[f'DPM {suffix}'] = safe_div(my_dmg_est, t)
+                stats[f'GPM {suffix}'] = safe_div(my_gold, t); stats[f'DPM {suffix}'] = safe_div(my_dmg_est, t)
                 stats[f'Gold Share {suffix}'] = safe_div(my_gold, team_gold_at_t)
                 stats[f'Gold Eff {suffix}'] = safe_div(my_dmg_est, my_gold)
-                
-                stats[f'CS Diff {suffix}'] = my_cs - en_cs
-                stats[f'Gold Diff {suffix}'] = my_gold - en_gold
-                stats[f'XP Diff {suffix}'] = my_xp - en_xp
-                # Arredonda a diferença de dano também
-                stats[f'DMG Diff {suffix}'] = round(my_dmg_est - en_dmg_est, 2)
+                stats[f'CS Diff {suffix}'] = my_cs - en_cs; stats[f'Gold Diff {suffix}'] = my_gold - en_gold
+                stats[f'XP Diff {suffix}'] = my_xp - en_xp; stats[f'DMG Diff {suffix}'] = round(my_dmg_est - en_dmg_est, 2)
             
             if t == 12:
-                stats['CS aos 12 min'] = my_cs
-                stats['Gold aos 12 min'] = my_gold
-                stats['XP aos 12 min'] = my_xp
-                stats['Deaths até 12min'] = my_d
-                stats['VPM @12'] = round(safe_div(p['visionScore'], duration_min) * 12, 2)
+                stats['CS aos 12 min'] = my_cs; stats['Gold aos 12 min'] = my_gold; stats['XP aos 12 min'] = my_xp
+                stats['Deaths até 12min'] = my_d; stats['VPM @12'] = round(safe_div(p['visionScore'], duration_min) * 12, 2)
                 stats['KDA @12'] = safe_div(my_k + my_a, my_d)
-                
             if t == 6: stats['CS aos 6 min'] = my_cs
             if t == 18: stats['CS aos 18 min'] = my_cs
 
         rows.append(stats)
     return rows
 
-def collect_match_ids(target_amount):
+def load_processed_ids_from_db():
+    # Consulta o Banco de Dados para saber quais partidas já temos
+    processed = set()
+    try:
+        # Tenta ler apenas a coluna 'Match ID' da tabela 'partidas'
+        with engine.connect() as conn:
+            # Verifica se a tabela existe primeiro
+            # O jeito mais simples em Pandas é tentar um select limit 1
+            query = text('SELECT "Match ID" FROM partidas')
+            df_db = pd.read_sql(query, conn)
+            processed.update(df_db['Match ID'].astype(str))
+            print(f"Histórico no Banco de Dados: {len(processed)} partidas.")
+    except Exception as e:
+        print("Tabela 'partidas' ainda não existe ou erro na conexão (normal no 1º uso).")
+        print(f"Detalhe: {e}")
+    return processed
+
+def collect_match_ids(target_amount, processed_ids):
     all_match_ids = set()
     print("Conectando à Liga Master...")
     try:
@@ -217,47 +212,37 @@ def collect_match_ids(target_amount):
                 puuid = entry.get('puuid')
                 if not puuid:
                     summ_id = entry.get('summonerId')
-                    if summ_id:
-                        puuid = watcher.summoner.by_id(REGION, summ_id)['puuid']
+                    if summ_id: puuid = watcher.summoner.by_id(REGION, summ_id)['puuid']
                     else: continue
-
-                matches = watcher.match.matchlist_by_puuid(REGION, puuid, count=10)
-                all_match_ids.update(matches)
-                print(f" > Jogador OK. Partidas: {len(all_match_ids)}")
+                
+                # Baixa 20 partidas do jogador
+                matches = watcher.match.matchlist_by_puuid(REGION, puuid, count=20)
+                # Filtra o que JÁ TEMOS no banco
+                new_matches = [m for m in matches if str(m) not in processed_ids]
+                all_match_ids.update(new_matches)
+                print(f" > Jogador OK. Novas na fila: {len(all_match_ids)}")
                 time.sleep(1.0)
             except: continue
-    except Exception as e:
-        print(f"Erro na liga: {e}")
+    except: pass
     return list(all_match_ids)[:target_amount]
 
-def upload_to_sheets(df_novo):
-    if not GCP_SA_KEY or not SHEET_ID: return
+def upload_to_db(df_novo):
+    if df_novo.empty: return
+    print("Iniciando upload para o Supabase (Postgres)...")
     try:
-        creds_dict = json.loads(GCP_SA_KEY)
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        sh = client.open_by_key(SHEET_ID)
-        try: worksheet = sh.worksheet("DadosBrutos")
-        except: worksheet = sh.sheet1
-        
-        existing_data = worksheet.get_all_values()
-        if not existing_data: set_with_dataframe(worksheet, df_novo)
-        else: set_with_dataframe(worksheet, df_novo, row=len(existing_data)+1, include_header=False)
-        print("Upload Sheets OK!")
-    except Exception as e: print(f"Erro Sheets: {e}")
+        # A Mágica do Pandas: if_exists='append' cria a tabela se não existir
+        # chunksize ajuda a não sobrecarregar a conexão
+        df_novo.to_sql('partidas', engine, if_exists='append', index=False, chunksize=500)
+        print("SUCESSO: Dados salvos no Banco de Dados!")
+    except Exception as e:
+        print(f"ERRO ao salvar no Banco: {e}")
 
 def main():
-    processed_ids = set()
-    if os.path.isfile(FILE_RAW):
-        try:
-            # Lê com ponto (internacional) para evitar confusão na leitura também
-            df = pd.read_csv(FILE_RAW, sep=',', decimal='.')
-            if 'Match ID' in df.columns: processed_ids = set(df['Match ID'].astype(str))
-        except: pass
-
-    match_ids = collect_match_ids(MATCH_TARGET + 5)
-    match_ids = [mid for mid in match_ids if str(mid) not in processed_ids][:MATCH_TARGET]
+    # 1. Consulta o Banco para não repetir trabalho
+    processed_ids = load_processed_ids_from_db()
+    
+    # 2. Coleta novos IDs
+    match_ids = collect_match_ids(MATCH_TARGET, processed_ids)
     
     if not match_ids:
         print("Sem partidas novas.")
@@ -272,11 +257,16 @@ def main():
 
     if buffer:
         df_new = pd.DataFrame(buffer)
-        header = not os.path.isfile(FILE_RAW)
-        # Salva com PONTO (.) que é universal e seguro
-        df_new.to_csv(FILE_RAW, mode='a', index=False, sep=',', decimal='.', header=header)
-        upload_to_sheets(df_new)
-        print("CSV salvo e Sheets atualizado.")
+        
+        # 3. Salva no Supabase (Fonte da Verdade)
+        upload_to_db(df_new)
+        
+        # 4. Salva Backup CSV no GitHub (Data Lake Diário - Opcional mas recomendado)
+        if not os.path.exists(DATA_FOLDER): os.makedirs(DATA_FOLDER)
+        header = not os.path.isfile(FILE_TODAY)
+        # Salva CSV com formato BR para leitura fácil humana, se precisar
+        df_new.to_csv(FILE_TODAY, mode='a', index=False, sep=';', decimal=',', header=header)
+        print(f"Backup CSV salvo em: {FILE_TODAY}")
 
 if __name__ == "__main__":
     main()
