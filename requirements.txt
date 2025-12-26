@@ -5,3 +5,4 @@ oauth2client
 gspread-dataframe
 psycopg2-binary
 sqlalchemy
+plotly
