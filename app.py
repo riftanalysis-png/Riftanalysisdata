@@ -14,7 +14,7 @@ API_KEY = os.environ.get("RIOT_API_KEY")
 GCP_SA_KEY = os.environ.get("GCP_SA_KEY") 
 SHEET_ID = os.environ.get("SHEET_ID")     
 REGION = 'kr'
-MATCH_TARGET = 3 
+MATCH_TARGET = 1440 
 FILE_RAW = 'Historico_Bruto_Completo.csv'
 
 sys.stdout.reconfigure(line_buffering=True)
