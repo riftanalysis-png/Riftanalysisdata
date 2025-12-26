@@ -31,14 +31,17 @@ jobs:
       - name: Rodar Script
         env:
           RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+          # GCP e SHEET não são mais obrigatórios se formos 100% banco, 
+          # mas deixei aqui caso vc ainda queira usar o backup no sheets.
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
+          # AQUI ESTAVA FALTANDO A CHAVE NOVA:
+          DB_URL: ${{ secrets.DB_URL }}
         run: python app.py
 
       - name: Salvar Dados (Auto Commit Blindado)
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Bot: Novas partidas adicionadas"
-          file_pattern: '*.csv'
-          # Se tiver conflito, força a atualização (seguro pois queremos apenas somar dados)
+          commit_message: "Bot: Backup CSV diario"
+          file_pattern: 'dados/*.csv'
           push_options: '--force'
