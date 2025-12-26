@@ -87,8 +87,7 @@ def process_match(match_id):
     duration_seconds = info['gameDuration']
     duration_min = duration_seconds / 60
     
-    # --- 🛡️ FILTRO DE REMAKE ---
-    # Se durou menos de 210 segundos (3min 30s), ignora totalmente.
+    # 🛡️ FILTRO DE REMAKE (< 3min 30s)
     if duration_seconds < 210: 
         print(f" ⏩ Ignorando Remake ({duration_min:.1f} min)")
         return [] 
@@ -122,13 +121,26 @@ def process_match(match_id):
             enemy_data = next((x for x in participants_info if x['participantId'] == enemy_pid), None)
             if enemy_data: enemy_champ = enemy_data['championName']
 
+        # --- CORREÇÃO DO NOME AQUI ---
+        # Monta o Riot ID corretamente: Nome + # + TAG
+        game_name = p.get('riotIdGameName')
+        tag_line = p.get('riotIdTagline')
+        
+        if game_name and tag_line:
+            full_name = f"{game_name}#{tag_line}"
+        else:
+            full_name = p.get('summonerName', 'Desconhecido') # Fallback
+            
         stats = {
             'Qtd_Partidas': 1, 'Match ID': match_id, 'Patch': patch,
             'Champion': p['championName'], 'Enemy Champion': enemy_champ,
             'Game Start Time': start_time, 'Win Rate %': 1 if p['win'] else 0,
-            'Player Name': p['summonerName'], 'PUUID': p['puuid'],
             
-            # KDA & Combate (Usando .get para evitar erros)
+            # AGORA SALVA O NOME CERTO:
+            'Player Name': full_name, 
+            'PUUID': p['puuid'],
+            
+            # KDA & Combate
             'Kills': p.get('kills', 0), 'Deaths': p.get('deaths', 0), 'Assists': p.get('assists', 0),
             'KDA': safe_div(p.get('kills', 0) + p.get('assists', 0), p.get('deaths', 1)),
             'Kill Participation': safe_div(p.get('kills', 0) + p.get('assists', 0), info['teams'][0]['objectives']['champion']['kills'] if tid==100 else info['teams'][1]['objectives']['champion']['kills']),
@@ -244,8 +256,8 @@ def main():
     print("\n🔍 Buscando partidas recentes...")
     for p in players:
         try:
-            # count=10 para garantir bom histórico na execução diária
-            matches = watcher.match.matchlist_by_puuid(REGION_MATCH, p['puuid'], count=35)
+            # Mantivemos count=10 para garantir o histórico
+            matches = watcher.match.matchlist_by_puuid(REGION_MATCH, p['puuid'], count=10)
             for m in matches:
                 if m not in processed_ids:
                     new_match_ids.add(m)
@@ -264,7 +276,6 @@ def main():
         data = process_match(m_id)
         if data: buffer.extend(data)
         
-        # Pausa de segurança para não tomar erro 429
         time.sleep(2.5) 
         print(f" [{i+1}/{len(match_list)}] Processado...")
 
@@ -273,7 +284,7 @@ def main():
         print("💾 Salvando na tabela 'partidas_br'...")
         try:
             df_new.to_sql('partidas_br', engine, if_exists='append', index=False, chunksize=500)
-            print("✅ SUCESSO! Dados salvos (Sem Remakes).")
+            print("✅ SUCESSO! Dados salvos com Nomes Corrigidos.")
         except Exception as e:
             print(f"❌ Erro de Banco: {e}")
 
