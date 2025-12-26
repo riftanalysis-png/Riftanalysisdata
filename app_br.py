@@ -315,7 +315,7 @@ def main():
         if data: buffer.extend(data)
         
         # ⚠️ DELAY AUMENTADO PARA EVITAR ERRO 429
-        time.sleep(2.5) 
+        time.sleep(3.5) 
         print(f" [{i+1}/{len(match_list)}] Processado...")
 
     if buffer:
