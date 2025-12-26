@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, text
 API_KEY = os.environ.get("RIOT_API_KEY") 
 DB_URL = os.environ.get("DB_URL") # URL do Supabase
 REGION = 'kr'
-MATCH_TARGET = 3
+MATCH_TARGET = 1440
 
 # Configuração de Backup CSV (Data Lake)
 DATA_FOLDER = 'dados'
