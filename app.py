@@ -166,7 +166,7 @@ def process_match(match_id):
             en_cs, en_gold, en_xp, en_lvl = get_stats_at_minute(frames, t, enemy_pid)
             team_gold_at_t = get_team_total_at_minute(frames, t, tid, info['participants'])
             
-            # Cálculo e ARREDONDAMENTO
+            # Cálculo e ARREDONDAMENTO das estimativas
             my_dmg_est = round((p['totalDamageDealtToChampions'] / duration_min) * t, 2)
             en_dmg_est = round((enemy_data['totalDamageDealtToChampions'] / duration_min) * t, 2)
             
@@ -188,6 +188,7 @@ def process_match(match_id):
                 stats[f'CS Diff {suffix}'] = my_cs - en_cs
                 stats[f'Gold Diff {suffix}'] = my_gold - en_gold
                 stats[f'XP Diff {suffix}'] = my_xp - en_xp
+                # Arredonda a diferença de dano também
                 stats[f'DMG Diff {suffix}'] = round(my_dmg_est - en_dmg_est, 2)
             
             if t == 12:
@@ -250,8 +251,8 @@ def main():
     processed_ids = set()
     if os.path.isfile(FILE_RAW):
         try:
-            # LÊ USANDO PONTO E VÍRGULA
-            df = pd.read_csv(FILE_RAW, sep=';', decimal=',')
+            # Lê com ponto (internacional) para evitar confusão na leitura também
+            df = pd.read_csv(FILE_RAW, sep=',', decimal='.')
             if 'Match ID' in df.columns: processed_ids = set(df['Match ID'].astype(str))
         except: pass
 
@@ -272,8 +273,8 @@ def main():
     if buffer:
         df_new = pd.DataFrame(buffer)
         header = not os.path.isfile(FILE_RAW)
-        # SALVA USANDO PONTO E VÍRGULA
-        df_new.to_csv(FILE_RAW, mode='a', index=False, sep=';', decimal=',', header=header)
+        # Salva com PONTO (.) que é universal e seguro
+        df_new.to_csv(FILE_RAW, mode='a', index=False, sep=',', decimal='.', header=header)
         upload_to_sheets(df_new)
         print("CSV salvo e Sheets atualizado.")
 
