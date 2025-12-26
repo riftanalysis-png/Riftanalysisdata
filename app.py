@@ -250,7 +250,7 @@ def main():
     processed_ids = set()
     if os.path.isfile(FILE_RAW):
         try:
-            # MUDANÇA AQUI: Lê com separador Ponto-e-Vírgula e Decimal Vírgula
+            # LÊ USANDO PONTO E VÍRGULA
             df = pd.read_csv(FILE_RAW, sep=';', decimal=',')
             if 'Match ID' in df.columns: processed_ids = set(df['Match ID'].astype(str))
         except: pass
@@ -272,7 +272,7 @@ def main():
     if buffer:
         df_new = pd.DataFrame(buffer)
         header = not os.path.isfile(FILE_RAW)
-        # MUDANÇA AQUI: Salva no padrão Brasileiro (sep=; decimal=,)
+        # SALVA USANDO PONTO E VÍRGULA
         df_new.to_csv(FILE_RAW, mode='a', index=False, sep=';', decimal=',', header=header)
         upload_to_sheets(df_new)
         print("CSV salvo e Sheets atualizado.")
