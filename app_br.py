@@ -143,7 +143,7 @@ def process_match(match_id):
             if enemy_data:
                 enemy_champ = enemy_data['championName']
 
-        # --- ESTATÍSTICAS BASE (Fim de Jogo) ---
+       # --- ESTATÍSTICAS BASE (BLINDADO CONTRA ERROS) ---
         stats = {
             'Qtd_Partidas': 1, 
             'Match ID': match_id, 
@@ -158,43 +158,45 @@ def process_match(match_id):
             'PUUID': p['puuid'],
 
             # KDA & Combate
-            'Kills': p['kills'], 
-            'Deaths': p['deaths'], 
-            'Assists': p['assists'],
-            'KDA': safe_div(p['kills'] + p['assists'], p['deaths']),
-            'Kill Participation': safe_div(p['kills'] + p['assists'], info['teams'][0]['objectives']['champion']['kills'] if tid==100 else info['teams'][1]['objectives']['champion']['kills']),
-            'Total Damage Dealt': p['totalDamageDealtToChampions'],
-            'Total Damage Taken': p['totalDamageTaken'],
-            'Self Mitigated Damage': p['totalDamageSelfMitigated'],
+            'Kills': p.get('kills', 0), 
+            'Deaths': p.get('deaths', 0), 
+            'Assists': p.get('assists', 0),
+            'KDA': safe_div(p.get('kills', 0) + p.get('assists', 0), p.get('deaths', 1)),
+            'Kill Participation': safe_div(p.get('kills', 0) + p.get('assists', 0), info['teams'][0]['objectives']['champion']['kills'] if tid==100 else info['teams'][1]['objectives']['champion']['kills']),
+            'Total Damage Dealt': p.get('totalDamageDealtToChampions', 0),
+            'Total Damage Taken': p.get('totalDamageTaken', 0),
+            
+            # --- CORREÇÃO AQUI: O nome certo é 'damageSelfMitigated' ---
+            'Self Mitigated Damage': p.get('damageSelfMitigated', 0),
             
             # Economia
-            'Gold Earned': p['goldEarned'],
-            'Farm/Min': safe_div(p['totalMinionsKilled'] + p['neutralMinionsKilled'], duration_min),
-            'Damage/Min': safe_div(p['totalDamageDealtToChampions'], duration_min),
-            'Gold/Min': safe_div(p['goldEarned'], duration_min),
+            'Gold Earned': p.get('goldEarned', 0),
+            'Farm/Min': safe_div(p.get('totalMinionsKilled', 0) + p.get('neutralMinionsKilled', 0), duration_min),
+            'Damage/Min': safe_div(p.get('totalDamageDealtToChampions', 0), duration_min),
+            'Gold/Min': safe_div(p.get('goldEarned', 0), duration_min),
             
             # Visão
-            'Vision Score': p['visionScore'],
-            'Vision Score/Min': safe_div(p['visionScore'], duration_min),
-            'Wards Placed': p['wardsPlaced'],
-            'Wards Killed': p['wardsKilled'],
-            'Control Wards Placed': p['detectorWardsPlaced'],
+            'Vision Score': p.get('visionScore', 0),
+            'Vision Score/Min': safe_div(p.get('visionScore', 0), duration_min),
+            'Wards Placed': p.get('wardsPlaced', 0),
+            'Wards Killed': p.get('wardsKilled', 0),
+            'Control Wards Placed': p.get('detectorWardsPlaced', 0),
             
             # Objetivos
-            'Damage to Buildings': p['damageDealtToBuildings'],
-            'Damage to Objectives': p['damageDealtToObjectives'],
+            'Damage to Buildings': p.get('damageDealtToBuildings', 0),
+            'Damage to Objectives': p.get('damageDealtToObjectives', 0),
             'Turret Plates Taken': p.get('turretPlatesTaken', 0),
             
             # Percentuais
-            'Team Damage %': safe_div(p['totalDamageDealtToChampions'], team_totals[tid]['dmg']),
-            'Damage Taken %': safe_div(p['totalDamageTaken'], team_totals[tid]['taken']),
+            'Team Damage %': safe_div(p.get('totalDamageDealtToChampions', 0), team_totals[tid]['dmg']),
+            'Damage Taken %': safe_div(p.get('totalDamageTaken', 0), team_totals[tid]['taken']),
             
             # Extras
             'First Blood Kill': 1 if p.get('firstBloodKill') else 0,
             'First Blood Assist': 1 if p.get('firstBloodAssist') else 0,
             'First Tower Kill': 1 if p.get('firstTowerKill') else 0,
             'First Tower Assist': 1 if p.get('firstTowerAssist') else 0,
-            'CC Score': p['timeCCingOthers']
+            'CC Score': p.get('timeCCingOthers', 0)
         }
         
         # --- TIMELINE LOOP (5, 6, 11, 12, 14, 18, 20 min) ---
