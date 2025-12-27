@@ -5,6 +5,7 @@ import sys
 from datetime import datetime
 from riotwatcher import LolWatcher, RiotWatcher, ApiError
 from sqlalchemy import create_engine, text
+from sqlalchemy import inspect 
 
 # --- CONFIGURAÇÃO ---
 API_KEY = os.environ.get("RIOT_API_KEY") 
@@ -236,14 +237,24 @@ def get_puuids_from_names():
 def load_processed_ids():
     processed = set()
     try:
+        # Verifica se a tabela existe antes de tentar ler
+        insp = inspect(engine)
+        if not insp.has_table("partidas_br"):
+            print("⚠️ Tabela 'partidas_br' não existe. Será criada.")
+            return processed
+
         with engine.connect() as conn:
-            conn.execute(text("SELECT 1 FROM partidas_br LIMIT 1"))
-            query = text('SELECT "Match ID" FROM partidas_br')
+            query = text('SELECT DISTINCT "Match ID" FROM partidas_br')
             df_db = pd.read_sql(query, conn)
+            # Garante que é string para comparar direito
             processed.update(df_db['Match ID'].astype(str))
-            print(f"Histórico BR carregado: {len(processed)} partidas.")
-    except Exception:
-        print("Tabela 'partidas_br' será criada do zero.")
+            print(f"✅ Histórico carregado: {len(processed)} partidas já processadas.")
+            
+    except Exception as e:
+        print(f"❌ ERRO CRÍTICO ao ler banco de dados: {e}")
+        # Se não conseguir ler o histórico, é melhor PARAR do que duplicar tudo
+        sys.exit(1) 
+        
     return processed
 
 def main():
