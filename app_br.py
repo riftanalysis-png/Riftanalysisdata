@@ -135,7 +135,11 @@ def process_match(match_id):
         stats = {
             'Qtd_Partidas': 1, 'Match ID': match_id, 'Patch': patch,
             'Champion': p['championName'], 'Enemy Champion': enemy_champ,
-            'Game Start Time': start_time, 'Win Rate %': 1 if p['win'] else 0,
+            
+            # --- NOVO CAMPO ADICIONADO AQUI ---
+            'Game Start Time': start_time, 
+            'Game Duration': round(duration_min, 2), # <--- Duração em minutos
+            'Win Rate %': 1 if p['win'] else 0,
             
             # AGORA SALVA O NOME CERTO:
             'Player Name': full_name, 
