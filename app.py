@@ -11,11 +11,12 @@ from sqlalchemy import create_engine, text
 
 # --- CONFIGURAÇÃO ---
 API_KEY = os.environ.get("RIOT_API_KEY") 
-DB_URL = os.environ.get("DB_URL") # URL do Supabase
+DB_URL = os.environ.get("DB_URL") 
 REGION = 'kr'
 MATCH_TARGET = 1440
+BATCH_SIZE = 100  # <--- NOVA CONFIG: Salvar a cada 100 partidas
 
-# Configuração de Backup CSV (Data Lake)
+# Configuração de Backup CSV
 DATA_FOLDER = 'dados'
 TODAY_STR = datetime.now().strftime('%Y-%m-%d')
 FILE_TODAY = f'{DATA_FOLDER}/{TODAY_STR}.csv'
@@ -30,10 +31,9 @@ if not DB_URL:
     sys.exit(1)
 
 watcher = LolWatcher(API_KEY)
-# Conexão com o Banco de Dados
 engine = create_engine(DB_URL)
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÕES AUXILIARES DE DADOS (Mantidas iguais) ---
 def get_clean_version(version_str):
     parts = version_str.split('.')
     return f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else version_str
@@ -184,20 +184,15 @@ def process_match(match_id):
     return rows
 
 def load_processed_ids_from_db():
-    # Consulta o Banco de Dados para saber quais partidas já temos
     processed = set()
     try:
-        # Tenta ler apenas a coluna 'Match ID' da tabela 'partidas'
         with engine.connect() as conn:
-            # Verifica se a tabela existe primeiro
-            # O jeito mais simples em Pandas é tentar um select limit 1
             query = text('SELECT "Match ID" FROM partidas')
             df_db = pd.read_sql(query, conn)
             processed.update(df_db['Match ID'].astype(str))
             print(f"Histórico no Banco de Dados: {len(processed)} partidas.")
     except Exception as e:
-        print("Tabela 'partidas' ainda não existe ou erro na conexão (normal no 1º uso).")
-        print(f"Detalhe: {e}")
+        print(f"Info: Tabela nova ou erro na leitura ({e}). Iniciando do zero.")
     return processed
 
 def collect_match_ids(target_amount, processed_ids):
@@ -215,9 +210,7 @@ def collect_match_ids(target_amount, processed_ids):
                     if summ_id: puuid = watcher.summoner.by_id(REGION, summ_id)['puuid']
                     else: continue
                 
-                # Baixa 20 partidas do jogador
                 matches = watcher.match.matchlist_by_puuid(REGION, puuid, count=20)
-                # Filtra o que JÁ TEMOS no banco
                 new_matches = [m for m in matches if str(m) not in processed_ids]
                 all_match_ids.update(new_matches)
                 print(f" > Jogador OK. Novas na fila: {len(all_match_ids)}")
@@ -226,47 +219,66 @@ def collect_match_ids(target_amount, processed_ids):
     except: pass
     return list(all_match_ids)[:target_amount]
 
-def upload_to_db(df_novo):
-    if df_novo.empty: return
-    print("Iniciando upload para o Supabase (Postgres)...")
+# --- NOVA FUNÇÃO PARA SALVAR LOTE ---
+def salvar_lote(buffer_dados):
+    if not buffer_dados:
+        return
+
+    df_lote = pd.DataFrame(buffer_dados)
+    qtd_linhas = len(df_lote)
+    
+    print(f"--- Salvando lote de {qtd_linhas} linhas no banco... ---")
+    
+    # 1. Supabase (Postgres)
     try:
-        # A Mágica do Pandas: if_exists='append' cria a tabela se não existir
-        # chunksize ajuda a não sobrecarregar a conexão
-        df_novo.to_sql('partidas', engine, if_exists='append', index=False, chunksize=500)
-        print("SUCESSO: Dados salvos no Banco de Dados!")
+        df_lote.to_sql('partidas', engine, if_exists='append', index=False, chunksize=500)
+        print(" > DB: Sucesso!")
     except Exception as e:
-        print(f"ERRO ao salvar no Banco: {e}")
+        print(f" > DB ERRO: {e}")
+
+    # 2. CSV Backup
+    try:
+        if not os.path.exists(DATA_FOLDER): os.makedirs(DATA_FOLDER)
+        # Verifica se o arquivo já existe para saber se escreve o header
+        header = not os.path.isfile(FILE_TODAY)
+        df_lote.to_csv(FILE_TODAY, mode='a', index=False, sep=';', decimal=',', header=header)
+        print(" > CSV: Sucesso!")
+    except Exception as e:
+        print(f" > CSV ERRO: {e}")
 
 def main():
-    # 1. Consulta o Banco para não repetir trabalho
     processed_ids = load_processed_ids_from_db()
-    
-    # 2. Coleta novos IDs
     match_ids = collect_match_ids(MATCH_TARGET, processed_ids)
     
     if not match_ids:
         print("Sem partidas novas.")
         return
 
-    print(f"Processando {len(match_ids)} partidas...")
+    print(f"Iniciando processamento de {len(match_ids)} partidas...")
+    
     buffer = []
+    partidas_no_lote = 0 # Contador para o lote atual
+
     for i, m_id in enumerate(match_ids):
         data = process_match(m_id)
-        if data: buffer.extend(data)
+        if data: 
+            buffer.extend(data)
+            partidas_no_lote += 1 # Só incrementa se a partida retornou dados válidos
+        
+        # --- CHECKPOINT: Salvar a cada BATCH_SIZE (100) partidas ---
+        if partidas_no_lote >= BATCH_SIZE:
+            salvar_lote(buffer)
+            buffer = []        # Limpa o buffer
+            partidas_no_lote = 0 # Reseta o contador do lote
+            
         time.sleep(1.2)
 
+    # --- FINAL: Salvar o que sobrou no buffer ---
     if buffer:
-        df_new = pd.DataFrame(buffer)
-        
-        # 3. Salva no Supabase (Fonte da Verdade)
-        upload_to_db(df_new)
-        
-        # 4. Salva Backup CSV no GitHub (Data Lake Diário - Opcional mas recomendado)
-        if not os.path.exists(DATA_FOLDER): os.makedirs(DATA_FOLDER)
-        header = not os.path.isfile(FILE_TODAY)
-        # Salva CSV com formato BR para leitura fácil humana, se precisar
-        df_new.to_csv(FILE_TODAY, mode='a', index=False, sep=';', decimal=',', header=header)
-        print(f"Backup CSV salvo em: {FILE_TODAY}")
+        print("Salvando partidas restantes...")
+        salvar_lote(buffer)
+    
+    print("Processamento finalizado.")
 
 if __name__ == "__main__":
     main()
